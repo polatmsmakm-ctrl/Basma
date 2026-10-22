@@ -2,7 +2,7 @@ name: Basma
 options:
   bundleIdPrefix: com.rashid
   deploymentTarget:
-    iOS: "15.0"
+    iOS: "16.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -25,6 +25,7 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1,2"
         INFOPLIST_FILE: Basma/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: Basma/Info.plist
       properties:
