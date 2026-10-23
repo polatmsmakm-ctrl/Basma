@@ -9,14 +9,26 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         return true
     }
 
-    // Show the banner even when the app is open
+    // Notification arrives while the app is open
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        let req = notification.request
+        let id = req.identifier
+        let kindRaw = req.content.userInfo["kind"] as? String
+        let isBuzz = id.hasPrefix("buzz-")
+        let isMain = id.hasSuffix("-at")
+
+        if let raw = kindRaw, let kind = ReminderKind(rawValue: raw), isBuzz || isMain {
+            // Continuous vibration + big stop screen instead of a plain banner
+            DispatchQueue.main.async { AlertController.shared.start(kind: kind) }
+            completionHandler(isBuzz ? [.list] : [.banner, .list, .sound])
+            return
+        }
         completionHandler([.banner, .list, .sound])
     }
 
-    // Buttons on the notification: "done" and "snooze 10 minutes"
+    // Buttons on the notification and taps
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
@@ -26,8 +38,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         switch response.actionIdentifier {
         case NotifID.done:
             if let kindRaw = kindRaw { DoneStorage.mark(kindRaw: kindRaw) }
+            NotificationCenter.default.post(name: .basmaStopBuzz, object: nil)
+
+        case NotifID.stop, UNNotificationDefaultActionIdentifier:
+            if let kindRaw = kindRaw { DoneStorage.stopBuzz(kindRaw: kindRaw) }
+            NotificationCenter.default.post(name: .basmaStopBuzz, object: nil)
 
         case NotifID.snooze:
+            if let kindRaw = kindRaw { DoneStorage.stopBuzz(kindRaw: kindRaw) }
             let c = UNMutableNotificationContent()
             c.title = src.title
             c.body = "لم تبصم بعد؟ \(src.title) ✋"
@@ -38,6 +56,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             let req = UNNotificationRequest(identifier: NotifID.snoozePrefix + UUID().uuidString,
                                             content: c, trigger: trigger)
             center.add(req)
+            NotificationCenter.default.post(name: .basmaStopBuzz, object: nil)
 
         default:
             break

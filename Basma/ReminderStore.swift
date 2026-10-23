@@ -74,6 +74,7 @@ enum NotifID {
     static let category = "BASMA_REMINDER"
     static let done = "BASMA_DONE"
     static let snooze = "BASMA_SNOOZE"
+    static let stop = "BASMA_STOP"
     static let snoozePrefix = "snooze-"
 }
 
@@ -115,7 +116,39 @@ enum DoneStorage {
     }
 
     /// Removes delivered banners and pending snoozes of this kind.
+    // MARK: vibration pulses
+
+    private static let mutedKey = "basma.buzzMuted"
+
+    static func suppressedBuzz() -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: mutedKey) ?? [])
+    }
+
+    /// Stops the pulse chain of this alarm for today (pending + delivered) and keeps it stopped.
+    static func stopBuzz(kindRaw: String) {
+        let day = dayString()
+        let oldest = dayString(Date().addingTimeInterval(-3 * 86400))
+        var s = suppressedBuzz().filter { String($0.prefix(10)) >= oldest }
+        s.insert("\(day)|\(kindRaw)")
+        UserDefaults.standard.set(Array(s), forKey: mutedKey)
+
+        let center = UNUserNotificationCenter.current()
+        let prefix = "buzz-\(kindRaw)-\(day)-"
+        center.getPendingNotificationRequests { list in
+            let ids = list.map { $0.identifier }.filter { $0.hasPrefix(prefix) }
+            if !ids.isEmpty { center.removePendingNotificationRequests(withIdentifiers: ids) }
+        }
+        center.getDeliveredNotifications { list in
+            let ids = list
+                .filter { $0.request.identifier.hasPrefix("buzz-")
+                    && ($0.request.content.userInfo["kind"] as? String) == kindRaw }
+                .map { $0.request.identifier }
+            if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
+        }
+    }
+
     static func cleanFollowups(kindRaw: String) {
+        stopBuzz(kindRaw: kindRaw)
         let center = UNUserNotificationCenter.current()
         center.getDeliveredNotifications { list in
             let ids = list
@@ -136,9 +169,10 @@ enum DoneStorage {
 
     static func registerCategories() {
         let done = UNNotificationAction(identifier: NotifID.done, title: "تمت البصمة ✓", options: [])
+        let stop = UNNotificationAction(identifier: NotifID.stop, title: "إيقاف الاهتزاز", options: [])
         let snooze = UNNotificationAction(identifier: NotifID.snooze, title: "ذكّرني بعد ١٠ دقائق", options: [])
         let cat = UNNotificationCategory(identifier: NotifID.category,
-                                         actions: [done, snooze],
+                                         actions: [done, stop, snooze],
                                          intentIdentifiers: [],
                                          options: [])
         UNUserNotificationCenter.current().setNotificationCategories([cat])
@@ -173,6 +207,17 @@ final class ReminderStore: ObservableObject {
     private let resumeKey = "basma.resumeDate"
     private let vacationKey = "basma.vacationDays"
     private let nagKey = "basma.nagMinutes"
+    private let buzzSteps = 7          // pulses after the main notification
+    private let buzzSpacing = 6        // seconds between pulses (~42s total)
+
+    /// Vibrate/pulse for ~40 seconds when a reminder fires, until stopped.
+    @Published var buzzEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(buzzEnabled, forKey: "basma.buzz")
+            if !buzzEnabled { AlertController.shared.stop() }
+            schedule()
+        }
+    }
 
     init() {
         if let data = UserDefaults.standard.data(forKey: key),
@@ -191,6 +236,7 @@ final class ReminderStore: ObservableObject {
         resumeDate = t > 0 ? Date(timeIntervalSince1970: t) : nil
         vacationDays = Set(UserDefaults.standard.stringArray(forKey: vacationKey) ?? [])
         nagMinutes = (UserDefaults.standard.object(forKey: nagKey) as? Int) ?? 10
+        buzzEnabled = (UserDefaults.standard.object(forKey: "basma.buzz") as? Bool) ?? true
 
         NotificationCenter.default.addObserver(forName: .basmaDoneChanged, object: nil, queue: .main) { [weak self] _ in
             self?.reloadDone()
@@ -224,6 +270,7 @@ final class ReminderStore: ObservableObject {
     /// Called whenever the app becomes active.
     func refresh() {
         reloadDone()
+        silenceActiveAlarms()
         if let r = resumeDate, r <= Date() {
             resumeDate = nil          // vacation is over (didSet reschedules)
         } else {
@@ -368,6 +415,7 @@ final class ReminderStore: ObservableObject {
         content.sound = .default
         content.categoryIdentifier = NotifID.category
         content.userInfo = ["kind": kind.rawValue]
+        content.threadIdentifier = "basma-\(kind.rawValue)"
         let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: repeats)
         return UNNotificationRequest(identifier: id, content: content, trigger: trigger)
     }
@@ -404,7 +452,7 @@ final class ReminderStore: ObservableObject {
                 }
             }
             items.sort { $0.0 < $1.0 }
-            return items.prefix(50).map { $0.1 } + nagRequests(now: now)
+            return items.prefix(46).map { $0.1 } + nagRequests(now: now) + buzzRequests(now: now)
         }
 
         // Normal: weekly repeating notifications.
@@ -432,7 +480,62 @@ final class ReminderStore: ObservableObject {
                 }
             }
         }
-        return out + nagRequests(now: now)
+        return out + nagRequests(now: now) + buzzRequests(now: now)
+    }
+
+    /// A chain of notifications every few seconds after the main one, so the phone keeps
+    /// buzzing for ~40s even when locked. Only the next 2 alarms are prepared; stopping an
+    /// alarm (button, tap, opening the app, marking done) removes the rest of its chain.
+    private func buzzRequests(now: Date) -> [UNNotificationRequest] {
+        guard buzzEnabled else { return [] }
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: now)
+        let muted = DoneStorage.suppressedBuzz()
+        let span = Double(buzzSteps * buzzSpacing)
+
+        var alarms: [(fire: Date, reminder: FingerprintReminder, day: Date)] = []
+        for offset in 0..<4 {
+            guard let day = cal.date(byAdding: .day, value: offset, to: startOfToday) else { continue }
+            if isVacationDay(day) { continue }
+            if let rd = resumeDate, day < rd { continue }
+            let wd = cal.component(.weekday, from: day)
+            for r in reminders where r.enabled && r.days.contains(wd) {
+                if isDone(r.kind, on: day) { continue }
+                if muted.contains("\(DoneStorage.dayString(day))|\(r.kind.rawValue)") { continue }
+                guard let fire = cal.date(bySettingHour: r.hour, minute: r.minute, second: 0, of: day) else { continue }
+                if fire.addingTimeInterval(span) <= now { continue }
+                alarms.append((fire, r, day))
+            }
+        }
+        alarms.sort { $0.fire < $1.fire }
+
+        var out: [UNNotificationRequest] = []
+        for a in alarms.prefix(2) {
+            for k in 1...buzzSteps {
+                let t = a.fire.addingTimeInterval(Double(k * buzzSpacing))
+                if t <= now { continue }
+                let c = cal.dateComponents([.year, .month, .day, .hour, .minute, .second], from: t)
+                out.append(makeRequest(id: "buzz-\(a.reminder.kind.rawValue)-\(DoneStorage.dayString(a.day))-\(k)",
+                                       kind: a.reminder.kind,
+                                       body: "حان وقت \(a.reminder.kind.title) ✋ اضغط «إيقاف الاهتزاز»",
+                                       comps: c, repeats: false))
+            }
+        }
+        return out
+    }
+
+    /// Opening the app right after an alarm means you noticed it: stop its vibration chain.
+    private func silenceActiveAlarms() {
+        let cal = Calendar.current
+        let now = Date()
+        let wd = cal.component(.weekday, from: now)
+        for r in reminders where r.enabled && r.days.contains(wd) {
+            guard let fire = cal.date(bySettingHour: r.hour, minute: r.minute, second: 0, of: now) else { continue }
+            let elapsed = now.timeIntervalSince(fire)
+            if elapsed >= 0 && elapsed <= 50 {
+                DoneStorage.stopBuzz(kindRaw: r.kind.rawValue)
+            }
+        }
     }
 
     /// One-off "you haven't marked it yet" notifications for the next 3 days.

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var store: ReminderStore
+    @ObservedObject private var alert = AlertController.shared
 
     var body: some View {
         TabView {
@@ -16,6 +17,15 @@ struct ContentView: View {
         }
         .tint(Theme.accent)
         .preferredColorScheme(.dark)
+        .fullScreenCover(item: Binding<ReminderKind?>(
+            get: { alert.activeKind },
+            set: { newValue in if newValue == nil { alert.stop() } }
+        )) { kind in
+            AlertView(kind: kind)
+                .environmentObject(store)
+                .environment(\.layoutDirection, .rightToLeft)
+                .environment(\.locale, Locale(identifier: "ar"))
+        }
     }
 }
 
@@ -243,6 +253,7 @@ struct SettingsView: View {
                     }
                     .padding(.top, 6)
 
+                    buzzCard
                     nagCard
                     toolsCard
                     notificationsCard
@@ -284,6 +295,39 @@ struct SettingsView: View {
     }
 
     // MARK: cards
+
+    private var buzzCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "iphone.radiowaves.left.and.right")
+                    .foregroundColor(Color(hex: 0xFB7185))
+                Text("اهتزاز ٤٠ ثانية")
+                    .font(.system(.headline, design: .rounded))
+                Spacer()
+                Toggle("", isOn: $store.buzzEnabled)
+                    .labelsHidden()
+                    .tint(Color(hex: 0xFB7185))
+            }
+            Text("لما يجي وقت البصمة يهتز الجوال لين تضغط «إيقاف» أو «تمت البصمة»، وأقصى مدة ٤٠ ثانية.")
+                .font(.footnote)
+                .foregroundColor(Theme.muted)
+            Text("داخل التطبيق: اهتزاز متواصل مع شاشة إيقاف كبيرة. والجوال مقفل: نبضات اهتزاز كل ٦ ثواني تقريباً (قيد من نظام iOS).")
+                .font(.caption)
+                .foregroundColor(Theme.muted)
+            Button {
+                haptic()
+                AlertController.shared.start(kind: .entry, force: true)
+            } label: {
+                Label("تجربة الاهتزاز الآن", systemImage: "waveform")
+                    .font(.footnote.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 40)
+                    .background(Capsule().fill(Color.white.opacity(0.1)))
+                    .foregroundColor(.white)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
 
     private var nagCard: some View {
         VStack(alignment: .leading, spacing: 12) {
