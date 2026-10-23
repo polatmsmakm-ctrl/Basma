@@ -1,45 +1,11 @@
 import SwiftUI
 
-// MARK: - Colors
-
-extension Color {
-    init(hex: UInt, opacity: Double = 1) {
-        self.init(
-            .sRGB,
-            red: Double((hex >> 16) & 0xFF) / 255,
-            green: Double((hex >> 8) & 0xFF) / 255,
-            blue: Double(hex & 0xFF) / 255,
-            opacity: opacity
-        )
-    }
-}
-
 enum Theme {
     static let bgTop = Color(hex: 0x0B1020)
     static let bgBottom = Color(hex: 0x1B1740)
     static let accent = Color(hex: 0x7C83FF)
     static let accent2 = Color(hex: 0xB07CFF)
     static let muted = Color.white.opacity(0.6)
-}
-
-extension ReminderKind: Identifiable {
-    var id: String { rawValue }
-
-    var tint: Color {
-        switch self {
-        case .entry: return Color(hex: 0x34D399)
-        case .presence: return Color(hex: 0xFBBF24)
-        case .exit: return Color(hex: 0xFB7185)
-        }
-    }
-
-    var subtitle: String {
-        switch self {
-        case .entry: return "عند وصولك للعمل"
-        case .presence: return "خلال الدوام"
-        case .exit: return "عند انصرافك"
-        }
-    }
 }
 
 // MARK: - Shared views

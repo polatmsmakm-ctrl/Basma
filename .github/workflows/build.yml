@@ -22,6 +22,7 @@ jobs:
 
       - name: Build (unsigned)
         run: |
+          set -o pipefail
           xcodebuild -project Basma.xcodeproj \
             -scheme Basma \
             -configuration Release \
@@ -29,22 +30,43 @@ jobs:
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            build
+            build 2>&1 | tee build.log
 
-      - name: Package IPA
+      - name: Report build errors
+        if: failure()
         run: |
-          mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/Basma.app Payload/
-          zip -qr Basma.ipa Payload
+          grep -E "error:|fatal error" build.log | sort -u | head -25 | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Basma-ipa
-          path: Basma.ipa
+      - name: Package IPAs
+        run: |
+          APP=build/Build/Products/Release-iphoneos/Basma.app
+          echo "::notice title=bundle::$(ls "$APP" | tr '\n' ' ') | plugins: $(ls "$APP/PlugIns" 2>/dev/null | tr '\n' ' ')"
 
-      - name: Publish release with IPA
+          # Full version: app + widget, ad-hoc signed so the App Group entitlement is embedded
+          if [ -d "$APP/PlugIns/BasmaWidget.appex" ]; then
+            codesign -f -s - --entitlements BasmaWidget/BasmaWidget.entitlements "$APP/PlugIns/BasmaWidget.appex" || true
+          fi
+          codesign -f -s - --entitlements Basma/Basma.entitlements "$APP" || true
+          mkdir -p full/Payload
+          cp -R "$APP" full/Payload/
+          (cd full && zip -qr ../Basma.ipa Payload)
+
+          # Lite version: no widget extension and no App Group (for the free-account app limit)
+          mkdir -p lite/Payload
+          cp -R "$APP" lite/Payload/
+          rm -rf lite/Payload/Basma.app/PlugIns
+          codesign -f -s - lite/Payload/Basma.app || true
+          (cd lite && zip -qr ../Basma-Lite.ipa Payload)
+
+          ls -la Basma.ipa Basma-Lite.ipa
+
+      - name: Publish release with IPAs
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: Basma (latest)
-          files: Basma.ipa
+          files: |
+            Basma.ipa
+            Basma-Lite.ipa

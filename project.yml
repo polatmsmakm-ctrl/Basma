@@ -17,15 +17,24 @@ targets:
     platform: iOS
     sources:
       - path: Basma
+      - path: Shared
+    dependencies:
+      - target: BasmaWidget
+    entitlements:
+      path: Basma/Basma.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.rashid.basma
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rashid.basma
         PRODUCT_NAME: Basma
-        MARKETING_VERSION: "1.3"
-        CURRENT_PROJECT_VERSION: "4"
+        MARKETING_VERSION: "2.0"
+        CURRENT_PROJECT_VERSION: "5"
         TARGETED_DEVICE_FAMILY: "1,2"
         INFOPLIST_FILE: Basma/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        OTHER_LDFLAGS: "$(inherited) -weak_framework AlarmKit -weak_framework ActivityKit"
     info:
       path: Basma/Info.plist
       properties:
@@ -34,3 +43,34 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        NSSupportsLiveActivities: true
+        NSAlarmKitUsageDescription: "لضبط منبّهات تذكّرك ببصمة الدخول والتواجد والخروج."
+        NSLocationWhenInUseUsageDescription: "لتحديد موقع دوامك وتذكيرك بالبصمة عند الوصول والمغادرة."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "لتذكيرك بالبصمة عند وصولك للدوام ومغادرته حتى لو التطبيق مغلق."
+  BasmaWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: BasmaWidget
+      - path: Shared
+    entitlements:
+      path: BasmaWidget/BasmaWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.rashid.basma
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rashid.basma.widget
+        PRODUCT_NAME: BasmaWidget
+        MARKETING_VERSION: "2.0"
+        CURRENT_PROJECT_VERSION: "5"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: "YES"
+        INFOPLIST_FILE: BasmaWidget/Info.plist
+        OTHER_LDFLAGS: "$(inherited) -weak_framework AlarmKit -weak_framework ActivityKit"
+    info:
+      path: BasmaWidget/Info.plist
+      properties:
+        CFBundleDisplayName: "بصمتي"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension

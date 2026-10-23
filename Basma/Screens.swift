@@ -233,6 +233,7 @@ struct HistoryView: View {
 
 struct SettingsView: View {
     @EnvironmentObject var store: ReminderStore
+    @ObservedObject private var loc = WorkLocation.shared
     @State private var showQuick = false
     @State private var showVacation = false
     @State private var confirmReset = false
@@ -253,8 +254,11 @@ struct SettingsView: View {
                     }
                     .padding(.top, 6)
 
+                    alarmCard
                     buzzCard
+                    locationCard
                     nagCard
+                    widgetCard
                     toolsCard
                     notificationsCard
                     dataCard
@@ -295,6 +299,145 @@ struct SettingsView: View {
     }
 
     // MARK: cards
+
+    // MARK: system alarm (iOS 26)
+
+    private var alarmCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "alarm.fill")
+                    .foregroundColor(Color(hex: 0xFBBF24))
+                Text("منبّه النظام")
+                    .font(.system(.headline, design: .rounded))
+                Spacer()
+                Toggle("", isOn: $store.systemAlarmEnabled)
+                    .labelsHidden()
+                    .tint(Color(hex: 0xFBBF24))
+                    .disabled(!SystemAlarmBridge.supported)
+            }
+            if SystemAlarmBridge.supported {
+                Text("منبّه حقيقي مثل منبّه الساعة: يرن ويهتز لين توقفه، حتى لو الجوال مقفل أو صامت.")
+                    .font(.footnote)
+                    .foregroundColor(Theme.muted)
+                if let status = store.systemAlarmStatus {
+                    Text(status)
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(store.systemAlarmActive ? Color(hex: 0x34D399) : Color(hex: 0xFBBF24))
+                }
+            } else {
+                Text("هذه الميزة تحتاج iOS 26 أو أحدث.")
+                    .font(.footnote)
+                    .foregroundColor(Theme.muted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    // MARK: location
+
+    private var locationCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "location.fill")
+                    .foregroundColor(Color(hex: 0x60A5FA))
+                Text("تذكير الموقع")
+                    .font(.system(.headline, design: .rounded))
+                Spacer()
+                Toggle("", isOn: $loc.enabled)
+                    .labelsHidden()
+                    .tint(Color(hex: 0x60A5FA))
+                    .disabled(!loc.hasWorkplace)
+            }
+            Text("يذكّرك بالبصمة أول ما توصل للدوام، وبالخروج لما تغادر.")
+                .font(.footnote)
+                .foregroundColor(Theme.muted)
+
+            Button {
+                haptic()
+                loc.saveCurrentAsWorkplace()
+            } label: {
+                Label(loc.hasWorkplace ? "تحديث موقع الدوام (أنا هنا الآن)" : "حدد موقعي الحالي كموقع الدوام",
+                      systemImage: "mappin.and.ellipse")
+                    .font(.footnote.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 40)
+                    .background(Capsule().fill(Color.white.opacity(0.1)))
+                    .foregroundColor(.white)
+            }
+
+            if loc.hasWorkplace {
+                HStack(spacing: 8) {
+                    ForEach([100.0, 150.0, 250.0, 400.0], id: \.self) { m in
+                        let on = loc.radius == m
+                        Button {
+                            haptic(.light)
+                            loc.radius = m
+                        } label: {
+                            Text("\(arNum(Int(m))) م")
+                                .font(.footnote.weight(.semibold))
+                                .frame(maxWidth: .infinity, minHeight: 36)
+                                .background(Capsule().fill(on ? Color(hex: 0x60A5FA) : Color.white.opacity(0.1)))
+                                .foregroundColor(on ? Color.black.opacity(0.85) : .white)
+                        }
+                    }
+                }
+                Text("المسافة حول الدوام اللي تعتبر «وصلت». الأفضل ١٥٠ م أو أكثر.")
+                    .font(.caption)
+                    .foregroundColor(Theme.muted)
+            }
+
+            if loc.enabled && loc.authStatus != .authorizedAlways {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("لازم تختار «دائماً» في إذن الموقع حتى يشتغل والتطبيق مقفل.")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(Color(hex: 0xFBBF24))
+                    Button("فتح إعدادات الموقع") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                    .font(.caption.weight(.bold))
+                }
+            }
+
+            if let m = loc.message {
+                Text(m)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(Color(hex: 0x34D399))
+            }
+
+            if loc.hasWorkplace {
+                Button("حذف موقع الدوام") {
+                    loc.clearWorkplace()
+                }
+                .font(.caption)
+                .foregroundColor(Color(hex: 0xFB7185))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    // MARK: widget
+
+    private var widgetCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "rectangle.on.rectangle")
+                    .foregroundColor(Theme.accent2)
+                Text("ويدجت الشاشة الرئيسية")
+                    .font(.system(.headline, design: .rounded))
+            }
+            Text("اضغط مطولاً على فراغ في الشاشة الرئيسية ← زر + ← ابحث عن «بصمتي». يعرض البصمة القادمة وحالة بصمات اليوم، ويتوفر أيضاً في شاشة القفل.")
+                .font(.footnote)
+                .foregroundColor(Theme.muted)
+            Text("إذا ما ظهر الويدجت أو ظهرت «افتح بصمتي»، فالنسخة المثبتة هي «Lite» بدون ويدجت.")
+                .font(.caption)
+                .foregroundColor(Theme.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
 
     private var buzzCard: some View {
         VStack(alignment: .leading, spacing: 12) {

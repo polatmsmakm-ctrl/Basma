@@ -1,72 +1,7 @@
 import Foundation
 import SwiftUI
 import UserNotifications
-
-// MARK: - Models
-
-enum ReminderKind: String, Codable, CaseIterable {
-    case entry      // بصمة الدخول
-    case presence   // بصمة التواجد
-    case exit       // بصمة الخروج
-
-    var title: String {
-        switch self {
-        case .entry: return "بصمة الدخول"
-        case .presence: return "بصمة التواجد"
-        case .exit: return "بصمة الخروج"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .entry: return "arrow.down.right.circle.fill"
-        case .presence: return "person.fill.checkmark"
-        case .exit: return "arrow.up.right.circle.fill"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .entry: return .green
-        case .presence: return .orange
-        case .exit: return .red
-        }
-    }
-}
-
-struct FingerprintReminder: Identifiable, Codable {
-    var id: String { kind.rawValue }
-    var kind: ReminderKind
-    var enabled: Bool
-    var hour: Int
-    var minute: Int
-    var days: Set<Int>        // 1 = الأحد ... 7 = السبت
-    var leadMinutes: Int      // تنبيه مسبق قبل الموعد
-
-    var timeDate: Date {
-        get {
-            Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: Date()) ?? Date()
-        }
-        set {
-            let c = Calendar.current.dateComponents([.hour, .minute], from: newValue)
-            hour = c.hour ?? hour
-            minute = c.minute ?? minute
-        }
-    }
-}
-
-struct DayStat: Identifiable {
-    let date: Date
-    let planned: Int
-    let done: Int
-    var id: TimeInterval { date.timeIntervalSince1970 }
-    var fraction: Double { planned == 0 ? 0 : Double(done) / Double(planned) }
-}
-
-let weekdayNames: [(Int, String)] = [
-    (1, "الأحد"), (2, "الاثنين"), (3, "الثلاثاء"), (4, "الأربعاء"),
-    (5, "الخميس"), (6, "الجمعة"), (7, "السبت")
-]
+import WidgetKit
 
 // MARK: - Notification constants
 
@@ -88,12 +23,7 @@ enum DoneStorage {
     static let key = "basma.done"
 
     static func dayString(_ date: Date = Date()) -> String {
-        let f = DateFormatter()
-        f.calendar = Calendar(identifier: .gregorian)
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone.current
-        f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: date)
+        SharedStore.dayString(date)
     }
 
     static func load() -> Set<String> {
@@ -207,6 +137,17 @@ final class ReminderStore: ObservableObject {
     private let resumeKey = "basma.resumeDate"
     private let vacationKey = "basma.vacationDays"
     private let nagKey = "basma.nagMinutes"
+    /// Real system alarm (AlarmKit, iOS 26+): rings and vibrates until you stop it, even when silent.
+    @Published var systemAlarmEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(systemAlarmEnabled, forKey: "basma.sysAlarm")
+            syncSystemAlarms(force: true)
+        }
+    }
+    @Published var systemAlarmActive = false
+    @Published var systemAlarmStatus: String?
+    private var lastAlarmSignature = ""
+
     private let buzzSteps = 7          // pulses after the main notification
     private let buzzSpacing = 6        // seconds between pulses (~42s total)
 
@@ -237,6 +178,7 @@ final class ReminderStore: ObservableObject {
         vacationDays = Set(UserDefaults.standard.stringArray(forKey: vacationKey) ?? [])
         nagMinutes = (UserDefaults.standard.object(forKey: nagKey) as? Int) ?? 10
         buzzEnabled = (UserDefaults.standard.object(forKey: "basma.buzz") as? Bool) ?? true
+        systemAlarmEnabled = UserDefaults.standard.bool(forKey: "basma.sysAlarm")
 
         NotificationCenter.default.addObserver(forName: .basmaDoneChanged, object: nil, queue: .main) { [weak self] _ in
             self?.reloadDone()
@@ -396,7 +338,37 @@ final class ReminderStore: ObservableObject {
 
     // MARK: - Scheduling
 
+    /// Writes what the widget needs and asks it to refresh.
+    private func publishSnapshot() {
+        let oldest = DoneStorage.dayString(Date().addingTimeInterval(-86400))
+        let recentDone = doneKeys.filter { String($0.prefix(10)) >= oldest }
+        let snapshot = WidgetSnapshot(reminders: reminders,
+                                      done: Array(recentDone),
+                                      vacation: Array(vacationDays),
+                                      updated: Date())
+        SharedStore.write(snapshot)
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    /// (Re)schedules the system alarms only when something relevant changed.
+    func syncSystemAlarms(force: Bool = false) {
+        let parts = reminders.map { "\($0.kind.rawValue)\($0.enabled)\($0.hour):\($0.minute)\($0.days.sorted())" }
+        let signature = "\(systemAlarmEnabled)|\(isOnVacation)|" + parts.joined(separator: ";")
+        if !force && signature == lastAlarmSignature { return }
+        lastAlarmSignature = signature
+
+        SystemAlarmBridge.sync(reminders: reminders, enabled: systemAlarmEnabled, paused: isOnVacation) { [weak self] active, message in
+            guard let self = self else { return }
+            let changed = self.systemAlarmActive != active
+            self.systemAlarmActive = active
+            self.systemAlarmStatus = message
+            if changed { self.schedule() }      // buzz pulses depend on whether the real alarm is active
+        }
+    }
+
     func schedule() {
+        publishSnapshot()
+        syncSystemAlarms()
         let requests = buildRequests()
         let center = UNUserNotificationCenter.current()
         center.getPendingNotificationRequests { pending in
@@ -487,7 +459,7 @@ final class ReminderStore: ObservableObject {
     /// buzzing for ~40s even when locked. Only the next 2 alarms are prepared; stopping an
     /// alarm (button, tap, opening the app, marking done) removes the rest of its chain.
     private func buzzRequests(now: Date) -> [UNNotificationRequest] {
-        guard buzzEnabled else { return [] }
+        guard buzzEnabled, !systemAlarmActive else { return [] }
         let cal = Calendar.current
         let startOfToday = cal.startOfDay(for: now)
         let muted = DoneStorage.suppressedBuzz()
