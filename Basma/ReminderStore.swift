@@ -144,6 +144,14 @@ final class ReminderStore: ObservableObject {
             syncSystemAlarms(force: true)
         }
     }
+    /// The sound used for reminders, the alert screen and the system alarm.
+    @Published var alarmSound: AlarmSound {
+        didSet {
+            UserDefaults.standard.set(alarmSound.rawValue, forKey: "basma.sound")
+            syncSystemAlarms(force: true)
+            schedule()
+        }
+    }
     @Published var systemAlarmActive = false
     @Published var systemAlarmStatus: String?
     private var lastAlarmSignature = ""
@@ -179,6 +187,7 @@ final class ReminderStore: ObservableObject {
         nagMinutes = (UserDefaults.standard.object(forKey: nagKey) as? Int) ?? 10
         buzzEnabled = (UserDefaults.standard.object(forKey: "basma.buzz") as? Bool) ?? true
         systemAlarmEnabled = UserDefaults.standard.bool(forKey: "basma.sysAlarm")
+        alarmSound = AlarmSound.current
 
         NotificationCenter.default.addObserver(forName: .basmaDoneChanged, object: nil, queue: .main) { [weak self] _ in
             self?.reloadDone()
@@ -353,11 +362,12 @@ final class ReminderStore: ObservableObject {
     /// (Re)schedules the system alarms only when something relevant changed.
     func syncSystemAlarms(force: Bool = false) {
         let parts = reminders.map { "\($0.kind.rawValue)\($0.enabled)\($0.hour):\($0.minute)\($0.days.sorted())" }
-        let signature = "\(systemAlarmEnabled)|\(isOnVacation)|" + parts.joined(separator: ";")
+        let signature = "\(systemAlarmEnabled)|\(isOnVacation)|\(alarmSound.rawValue)|" + parts.joined(separator: ";")
         if !force && signature == lastAlarmSignature { return }
         lastAlarmSignature = signature
 
-        SystemAlarmBridge.sync(reminders: reminders, enabled: systemAlarmEnabled, paused: isOnVacation) { [weak self] active, message in
+        SystemAlarmBridge.sync(reminders: reminders, enabled: systemAlarmEnabled, paused: isOnVacation,
+                               soundFile: alarmSound.fileName) { [weak self] active, message in
             guard let self = self else { return }
             let changed = self.systemAlarmActive != active
             self.systemAlarmActive = active
@@ -380,11 +390,11 @@ final class ReminderStore: ObservableObject {
     }
 
     private func makeRequest(id: String, kind: ReminderKind, body: String,
-                             comps: DateComponents, repeats: Bool) -> UNNotificationRequest {
+                             comps: DateComponents, repeats: Bool, loud: Bool = true) -> UNNotificationRequest {
         let content = UNMutableNotificationContent()
         content.title = kind.title
         content.body = body
-        content.sound = .default
+        content.sound = loud ? alarmSound.notificationSound : .default
         content.categoryIdentifier = NotifID.category
         content.userInfo = ["kind": kind.rawValue]
         content.threadIdentifier = "basma-\(kind.rawValue)"
@@ -418,7 +428,7 @@ final class ReminderStore: ObservableObject {
                             let c = cal.dateComponents([.year, .month, .day, .hour, .minute], from: lead)
                             items.append((lead, makeRequest(id: "\(r.kind.rawValue)-\(stamp)-lead", kind: r.kind,
                                                             body: "بعد \(r.leadMinutes) دقائق موعد \(r.kind.title)",
-                                                            comps: c, repeats: false)))
+                                                            comps: c, repeats: false, loud: false)))
                         }
                     }
                 }
@@ -448,7 +458,7 @@ final class ReminderStore: ObservableObject {
                     lc.minute = wrapped % 60
                     out.append(makeRequest(id: "\(r.kind.rawValue)-\(day)-lead", kind: r.kind,
                                            body: "بعد \(r.leadMinutes) دقائق موعد \(r.kind.title)",
-                                           comps: lc, repeats: true))
+                                           comps: lc, repeats: true, loud: false))
                 }
             }
         }
@@ -562,7 +572,7 @@ final class ReminderStore: ObservableObject {
         let content = UNMutableNotificationContent()
         content.title = "بصمتي"
         content.body = "هكذا سيظهر التذكير ✋ اسحب الإشعار لتظهر الأزرار"
-        content.sound = .default
+        content.sound = alarmSound.notificationSound
         content.categoryIdentifier = NotifID.category
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "test", content: content, trigger: trigger))

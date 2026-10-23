@@ -23,7 +23,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         if let raw = kindRaw, let kind = ReminderKind(rawValue: raw), isBuzz || isMain {
             // Continuous vibration + big stop screen instead of a plain banner
             DispatchQueue.main.async { AlertController.shared.start(kind: kind) }
-            completionHandler(isBuzz ? [.list] : [.banner, .list, .sound])
+            // The alert screen plays the sound itself, so skip the notification sound here.
+            completionHandler(AlertController.shared.enabled ? [.list] : [.banner, .list, .sound])
             return
         }
         completionHandler([.banner, .list, .sound])
@@ -50,7 +51,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             let c = UNMutableNotificationContent()
             c.title = src.title
             c.body = "لم تبصم بعد؟ \(src.title) ✋"
-            c.sound = .default
+            c.sound = AlarmSound.current.notificationSound
             c.categoryIdentifier = NotifID.category
             c.userInfo = src.userInfo
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 600, repeats: false)

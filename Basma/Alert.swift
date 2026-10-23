@@ -37,6 +37,14 @@ final class AlertController: ObservableObject {
         UIApplication.shared.isIdleTimerDisabled = true
         vibrate()
 
+        // Chosen alarm sound loops while the alert screen is open
+        let sound = AlarmSound.current
+        if sound == .standard {
+            AudioServicesPlaySystemSound(1007)
+        } else {
+            SoundPlayer.shared.play(sound, loop: true)
+        }
+
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self = self else { return }
@@ -57,6 +65,7 @@ final class AlertController: ObservableObject {
             DoneStorage.stopBuzz(kindRaw: k.rawValue)
         }
         activeKind = nil
+        SoundPlayer.shared.stop()
         UIApplication.shared.isIdleTimerDisabled = false
     }
 

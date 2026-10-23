@@ -185,7 +185,7 @@ final class WorkLocation: NSObject, ObservableObject, CLLocationManagerDelegate 
         let content = UNMutableNotificationContent()
         content.title = kind.title
         content.body = arriving ? "وصلت للدوام ✋ لا تنسَ \(kind.title)" : "غادرت الدوام ✋ لا تنسَ \(kind.title)"
-        content.sound = .default
+        content.sound = AlarmSound.current.notificationSound
         content.categoryIdentifier = NotifID.category
         content.userInfo = ["kind": kind.rawValue]
         content.threadIdentifier = "basma-\(kind.rawValue)"

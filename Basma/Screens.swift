@@ -234,6 +234,7 @@ struct HistoryView: View {
 struct SettingsView: View {
     @EnvironmentObject var store: ReminderStore
     @ObservedObject private var loc = WorkLocation.shared
+    @ObservedObject private var player = SoundPlayer.shared
     @State private var showQuick = false
     @State private var showVacation = false
     @State private var confirmReset = false
@@ -255,6 +256,7 @@ struct SettingsView: View {
                     .padding(.top, 6)
 
                     alarmCard
+                    soundCard
                     buzzCard
                     locationCard
                     nagCard
@@ -332,6 +334,83 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
+    }
+
+    // MARK: sound
+
+    private var soundCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "speaker.wave.2.fill")
+                    .foregroundColor(Color(hex: 0xFB923C))
+                Text("صوت المنبّه")
+                    .font(.system(.headline, design: .rounded))
+            }
+            Text("اختر الصوت اللي يشتغل مع التذكيرات ومنبّه النظام وشاشة الاهتزاز. اضغط ▶ للمعاينة.")
+                .font(.footnote)
+                .foregroundColor(Theme.muted)
+
+            VStack(spacing: 8) {
+                ForEach(AlarmSound.allCases) { sound in
+                    soundRow(sound)
+                }
+            }
+            .padding(.top, 4)
+
+            Text("بعد التغيير يُحدَّث ضبط التذكيرات تلقائياً. صوت الإشعار نفسه قد يتأخر تطبيقه لحين وصول الإشعار القادم.")
+                .font(.caption)
+                .foregroundColor(Theme.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    private func soundRow(_ sound: AlarmSound) -> some View {
+        let selected = store.alarmSound == sound
+        let playing = player.previewing == sound
+        return HStack(spacing: 12) {
+            Button {
+                haptic(.light)
+                store.alarmSound = sound
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                        .font(.title3)
+                        .foregroundColor(selected ? Theme.accent : Color.white.opacity(0.35))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(sound.title)
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            .foregroundColor(.white)
+                        Text(sound.subtitle)
+                            .font(.caption)
+                            .foregroundColor(Theme.muted)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                haptic(.light)
+                if playing {
+                    player.stop()
+                } else {
+                    player.play(sound, loop: false)
+                }
+            } label: {
+                Image(systemName: playing ? "stop.fill" : "play.fill")
+                    .font(.footnote)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Color.white.opacity(0.12)))
+                    .foregroundColor(.white)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(selected ? Theme.accent.opacity(0.18) : Color.white.opacity(0.05))
+        )
     }
 
     // MARK: location

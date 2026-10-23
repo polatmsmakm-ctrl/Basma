@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 #if canImport(AlarmKit)
 import AlarmKit
+import ActivityKit
 #endif
 
 /// Thin wrapper so the rest of the app doesn't care whether AlarmKit (iOS 26+) exists.
@@ -14,17 +15,19 @@ enum SystemAlarmBridge {
     }
 
     /// completion(active, message) is called on the main thread.
-    static func sync(reminders: [FingerprintReminder], enabled: Bool, paused: Bool,
+    static func sync(reminders: [FingerprintReminder], enabled: Bool, paused: Bool, soundFile: String?,
                      completion: @escaping (Bool, String?) -> Void) {
         #if canImport(AlarmKit)
         if #available(iOS 26.0, *) {
             Task { @MainActor in
-                let result = await AlarmCenter.shared.sync(reminders: reminders, enabled: enabled, paused: paused)
+                let result = await AlarmCenter.shared.sync(reminders: reminders, enabled: enabled,
+                                                           paused: paused, soundFile: soundFile)
                 completion(result.0, result.1)
             }
             return
         }
         #endif
+        _ = soundFile
         DispatchQueue.main.async {
             completion(false, enabled ? "منبّه النظام يحتاج iOS 26 أو أحدث." : nil)
         }
@@ -42,7 +45,7 @@ final class AlarmCenter {
         (UserDefaults.standard.dictionary(forKey: idsKey) as? [String: String]) ?? [:]
     }
 
-    func sync(reminders: [FingerprintReminder], enabled: Bool, paused: Bool) async -> (Bool, String?) {
+    func sync(reminders: [FingerprintReminder], enabled: Bool, paused: Bool, soundFile: String?) async -> (Bool, String?) {
         let manager = AlarmManager.shared
 
         // Remove whatever we scheduled before
@@ -70,7 +73,7 @@ final class AlarmCenter {
         for r in reminders where r.enabled && !r.days.isEmpty {
             let id = UUID()
             do {
-                try await schedule(id: id, reminder: r)
+                try await schedule(id: id, reminder: r, soundFile: soundFile)
                 ids[r.kind.rawValue] = id.uuidString
                 count += 1
             } catch {
@@ -103,7 +106,7 @@ final class AlarmCenter {
         }
     }
 
-    private func schedule(id: UUID, reminder r: FingerprintReminder) async throws {
+    private func schedule(id: UUID, reminder r: FingerprintReminder, soundFile: String?) async throws {
         let weekdays = r.days.sorted().compactMap { weekday($0) }
         let time = Alarm.Schedule.Relative.Time(hour: r.hour, minute: r.minute)
         let recurrence = Alarm.Schedule.Relative.Recurrence.weekly(weekdays)
@@ -116,7 +119,13 @@ final class AlarmCenter {
             metadata: BasmaAlarmData(title: r.kind.title),
             tintColor: Color(hex: 0x7C83FF)
         )
-        let configuration = AlarmManager.AlarmConfiguration.alarm(schedule: schedule, attributes: attributes)
+        let sound: AlertConfiguration.AlertSound
+        if let soundFile = soundFile {
+            sound = .named(soundFile)
+        } else {
+            sound = .default
+        }
+        let configuration = AlarmManager.AlarmConfiguration.alarm(schedule: schedule, attributes: attributes, sound: sound)
         _ = try await AlarmManager.shared.schedule(id: id, configuration: configuration)
     }
 }
