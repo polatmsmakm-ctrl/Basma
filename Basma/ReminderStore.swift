@@ -123,10 +123,12 @@ enum DoneStorage {
                 .map { $0.request.identifier }
             if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
         }
+        let nagID = "nag-\(kindRaw)-\(dayString())"
         center.getPendingNotificationRequests { list in
             let ids = list
-                .filter { $0.identifier.hasPrefix(NotifID.snoozePrefix)
-                    && ($0.content.userInfo["kind"] as? String) == kindRaw }
+                .filter { ($0.identifier.hasPrefix(NotifID.snoozePrefix)
+                           && ($0.content.userInfo["kind"] as? String) == kindRaw)
+                          || $0.identifier == nagID }
                 .map { $0.identifier }
             if !ids.isEmpty { center.removePendingNotificationRequests(withIdentifiers: ids) }
         }
@@ -150,7 +152,11 @@ final class ReminderStore: ObservableObject {
         didSet { save(); schedule() }
     }
     @Published var doneKeys: Set<String> {
-        didSet { DoneStorage.save(doneKeys) }
+        didSet { DoneStorage.save(doneKeys); schedule() }
+    }
+    /// Minutes after the exact time to nag again if the fingerprint isn't marked done (0 = off).
+    @Published var nagMinutes: Int {
+        didSet { UserDefaults.standard.set(nagMinutes, forKey: nagKey); schedule() }
     }
     /// First day reminders are active again (start of day). nil = no vacation.
     @Published var resumeDate: Date? {
@@ -166,6 +172,7 @@ final class ReminderStore: ObservableObject {
     private let key = "basma.reminders.v1"
     private let resumeKey = "basma.resumeDate"
     private let vacationKey = "basma.vacationDays"
+    private let nagKey = "basma.nagMinutes"
 
     init() {
         if let data = UserDefaults.standard.data(forKey: key),
@@ -183,6 +190,7 @@ final class ReminderStore: ObservableObject {
         let t = UserDefaults.standard.double(forKey: resumeKey)
         resumeDate = t > 0 ? Date(timeIntervalSince1970: t) : nil
         vacationDays = Set(UserDefaults.standard.stringArray(forKey: vacationKey) ?? [])
+        nagMinutes = (UserDefaults.standard.object(forKey: nagKey) as? Int) ?? 10
 
         NotificationCenter.default.addObserver(forName: .basmaDoneChanged, object: nil, queue: .main) { [weak self] _ in
             self?.reloadDone()
@@ -396,7 +404,7 @@ final class ReminderStore: ObservableObject {
                 }
             }
             items.sort { $0.0 < $1.0 }
-            return items.prefix(55).map { $0.1 }
+            return items.prefix(50).map { $0.1 } + nagRequests(now: now)
         }
 
         // Normal: weekly repeating notifications.
@@ -424,7 +432,55 @@ final class ReminderStore: ObservableObject {
                 }
             }
         }
+        return out + nagRequests(now: now)
+    }
+
+    /// One-off "you haven't marked it yet" notifications for the next 3 days.
+    /// They are cancelled for that day as soon as the fingerprint is marked done.
+    private func nagRequests(now: Date) -> [UNNotificationRequest] {
+        guard nagMinutes > 0 else { return [] }
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: now)
+        var out: [UNNotificationRequest] = []
+        for offset in 0..<3 {
+            guard let day = cal.date(byAdding: .day, value: offset, to: startOfToday) else { continue }
+            if isVacationDay(day) { continue }
+            if let rd = resumeDate, day < rd { continue }
+            let wd = cal.component(.weekday, from: day)
+            for r in reminders where r.enabled && r.days.contains(wd) {
+                if isDone(r.kind, on: day) { continue }
+                guard let base = cal.date(bySettingHour: r.hour, minute: r.minute, second: 0, of: day) else { continue }
+                let fire = base.addingTimeInterval(Double(nagMinutes * 60))
+                if fire <= now { continue }
+                let c = cal.dateComponents([.year, .month, .day, .hour, .minute], from: fire)
+                out.append(makeRequest(id: "nag-\(r.kind.rawValue)-\(DoneStorage.dayString(day))",
+                                       kind: r.kind,
+                                       body: "لم تبصم بعد؟ \(r.kind.title) ✋",
+                                       comps: c, repeats: false))
+            }
+        }
         return out
+    }
+
+    // MARK: - History helpers
+
+    private var earliestRecord: String? {
+        doneKeys.compactMap { $0.split(separator: "|").first.map(String.init) }.min()
+    }
+
+    func hasHistory(on date: Date) -> Bool {
+        guard let e = earliestRecord else { return false }
+        return DoneStorage.dayString(date) >= e
+    }
+
+    func dayStat(for date: Date) -> DayStat {
+        let kinds = scheduledKinds(on: date)
+        let done = kinds.filter { isDone($0, on: date) }.count
+        return DayStat(date: date, planned: kinds.count, done: done)
+    }
+
+    func clearHistory() {
+        doneKeys = []
     }
 
     func sendTest() {

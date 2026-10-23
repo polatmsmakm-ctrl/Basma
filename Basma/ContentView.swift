@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct ContentView: View {
+struct HomeView: View {
     @EnvironmentObject var store: ReminderStore
     @State private var editing: ReminderKind?
     @State private var showQuick = false
@@ -17,7 +17,7 @@ struct ContentView: View {
                     if store.isOnVacation { VacationBanner() }
 
                     TimelineView(.periodic(from: .now, by: 30)) { _ in
-                        HeroCard(next: store.nextUpcoming())
+                        HeroCard(next: store.nextUpcoming(), allDone: allDoneToday)
                     }
 
                     todaySection
@@ -31,6 +31,8 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .toolbarBackground(.visible, for: .tabBar)
+        .toolbarBackground(Theme.bgTop, for: .tabBar)
         .sheet(item: $editing) { kind in
             EditSheet(kind: kind)
                 .environmentObject(store)
@@ -67,9 +69,11 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("بصمتي")
                     .font(.system(size: 34, weight: .bold, design: .rounded))
-                Text(todayString)
+                Text("\(greeting) • \(todayString)")
                     .font(.subheadline)
                     .foregroundColor(Theme.muted)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             Spacer()
             Menu {
@@ -91,6 +95,20 @@ struct ContentView: View {
             }
         }
         .padding(.top, 6)
+    }
+
+    private var allDoneToday: Bool {
+        !store.todayKinds.isEmpty && store.doneTodayCount == store.todayKinds.count
+    }
+
+    private var greeting: String {
+        let h = Calendar.current.component(.hour, from: Date())
+        switch h {
+        case 4..<12: return "صباح الخير ☀️"
+        case 12..<17: return "طاب يومك 🌤"
+        case 17..<21: return "مساء الخير 🌇"
+        default: return "ليلتك سعيدة 🌙"
+        }
     }
 
     private var todayString: String {
@@ -206,6 +224,7 @@ struct ContentView: View {
 
 struct HeroCard: View {
     let next: (reminder: FingerprintReminder, date: Date)?
+    var allDone: Bool = false
     @State private var pulse = false
 
     var body: some View {
@@ -224,6 +243,15 @@ struct HeroCard: View {
             }
             .animation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true), value: pulse)
             .onAppear { pulse = true }
+
+            if allDone {
+                Text("✅ أنجزت كل بصمات اليوم")
+                    .font(.footnote.weight(.bold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color(hex: 0x34D399).opacity(0.25)))
+                    .foregroundColor(Color(hex: 0x34D399))
+            }
 
             if let n = next {
                 Text("البصمة القادمة")
