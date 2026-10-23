@@ -1,0 +1,16 @@
+name: Probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: macos-latest
+    steps:
+      - name: Report toolchain
+        run: |
+          echo "::notice title=sw_vers::$(sw_vers | tr '\n' ' ')"
+          echo "::notice title=xcode::$(xcodebuild -version | tr '\n' ' ')"
+          echo "::notice title=apps::$(ls /Applications | grep -i xcode | tr '\n' ' ')"
+          echo "::notice title=sdks::$(xcodebuild -showsdks | grep -i 'iphoneos' | tr '\n' ' ')"
+          echo "::notice title=alarmkit::$(find /Applications/Xcode*.app -name 'AlarmKit.swiftmodule' -maxdepth 12 2>/dev/null | head -3 | tr '\n' ' ')"
