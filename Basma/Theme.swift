@@ -140,6 +140,7 @@ extension ReminderStore {
         var best: (reminder: FingerprintReminder, date: Date)?
         for offset in 0...7 {
             guard let day = cal.date(byAdding: .day, value: offset, to: now) else { continue }
+            if isVacationDay(day) { continue }
             let wd = cal.component(.weekday, from: day)
             for r in reminders where r.enabled && r.days.contains(wd) {
                 guard let fire = cal.date(bySettingHour: r.hour, minute: r.minute, second: 0, of: day),

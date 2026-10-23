@@ -4,6 +4,7 @@ struct ContentView: View {
     @EnvironmentObject var store: ReminderStore
     @State private var editing: ReminderKind?
     @State private var showQuick = false
+    @State private var showVacation = false
     @AppStorage("basma.onboarded") private var onboarded = false
 
     var body: some View {
@@ -13,12 +14,14 @@ struct ContentView: View {
                 VStack(spacing: 18) {
                     header
                     if store.permissionDenied { permissionBanner }
+                    if store.isOnVacation { VacationBanner() }
 
                     TimelineView(.periodic(from: .now, by: 30)) { _ in
                         HeroCard(next: store.nextUpcoming())
                     }
 
                     todaySection
+                    statsSection
                     remindersSection
                     quickButton
                 }
@@ -37,6 +40,13 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showQuick) {
             QuickSetupSheet()
+                .environmentObject(store)
+                .environment(\.layoutDirection, .rightToLeft)
+                .environment(\.locale, Locale(identifier: "ar"))
+                .preferredColorScheme(.dark)
+        }
+        .sheet(isPresented: $showVacation) {
+            VacationSheet()
                 .environmentObject(store)
                 .environment(\.layoutDirection, .rightToLeft)
                 .environment(\.locale, Locale(identifier: "ar"))
@@ -65,6 +75,9 @@ struct ContentView: View {
             Menu {
                 Button { showQuick = true } label: {
                     Label("ضبط سريع للدوام", systemImage: "wand.and.stars")
+                }
+                Button { showVacation = true } label: {
+                    Label("وضع الإجازة", systemImage: "beach.umbrella")
                 }
                 Button { store.sendTest() } label: {
                     Label("تجربة إشعار بعد 5 ثواني", systemImage: "bell.badge")
@@ -127,7 +140,7 @@ struct ContentView: View {
             }
 
             if store.todayKinds.isEmpty {
-                Text("لا توجد بصمات مجدولة اليوم 🎉")
+                Text(store.isVacationDay(Date()) ? "اليوم إجازة 🌴 استمتع بوقتك" : "لا توجد بصمات مجدولة اليوم 🎉")
                     .font(.subheadline)
                     .foregroundColor(Theme.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -139,6 +152,16 @@ struct ContentView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: Stats
+
+    private var statsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("إحصائياتك")
+                .font(.system(.title3, design: .rounded).weight(.bold))
+            StatsCard()
         }
     }
 
